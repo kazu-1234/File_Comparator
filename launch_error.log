@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "C:\Users\kazuh\Documents\Visual_Studio\フォルダ比較ツール\folder_comparator_v1.5.0.pyw", line 658, in App
+    app = App()
+          ^^^
+NameError: name 'App' is not defined
