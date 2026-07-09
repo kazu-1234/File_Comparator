@@ -1,31 +1,21 @@
 # -*- coding: utf-8 -*-
-# バージョン: v1.5.3
-# 作成日: 2026-01-08
+# バージョン: v1.6.0
+# 作成日: 2026-07-09
 """
-File Comparison Tool (GUI Version) v1.5.3
+File Comparison Tool (GUI Version) v1.6.0
 
 指定された「元フォルダ」と「比較先フォルダ」を比較します。
 Windows版Google Drive（ファイルストリーム）での使用を想定し、
 ファイルをダウンロードせずにメタデータのみで高速に判定する機能を備えています。
 
+【機能追加 v1.6.0】
+- 不足ファイルのコピー方法として「比較先フォルダへ直接同期コピー（推奨）」を追加。
+- 設定画面に「3種のテーマ切替（システム連動 / ライト / ダーク）」を追加。
+- 設定画面に「不足ファイルのコピー先設定（直接コピー / 一時フォルダ抽出）」を追加。
+- アプリの設定を `config.json` に保存・読み込みする機能を追加。
+
 【機能追加 v1.5.3】
 - アップデート判定ロジックを修正（新しいバージョンか厳密に判定）。
-
-【機能追加 v1.5.2】
-- 設定画面の「閉じる」ボタンを削除。
-
-【機能追加 v1.5.1】
-- 設定画面のレイアウト調整（免責事項が見切れる問題を修正）。
-
-【機能追加 v1.5.0】
-- 設定メニューを追加（バージョン情報、アップデート確認、免責事項）。
-- GitHub経由でのアップデート確認機能を追加。
-
-【機能追加 v1.4.0】
-- 「不足分をコピー」機能を追加。
-- 比較終了後、不足ファイルがある場合にボタンが有効化される。
-- 実行ファイル(.pyw)と同じ場所に「Extracted_Missing_Files_...」フォルダを作成し、
-  階層構造を維持したまま不足ファイルをコピーする。
 """
 
 # --- ライブラリのインポート ---
@@ -57,8 +47,9 @@ except (ImportError, AttributeError):
 
 # --- グローバル定数 ---
 LOG_FILENAME = "comparison_result_log.txt"
+CONFIG_FILENAME = "config.json"
 GITHUB_REPO = "kazu-1234/file_comparator" # GitHubリポジトリ名 (ユーザー名/リポジトリ名)
-CURRENT_VERSION = "v1.5.3" # 現在のバージョン
+CURRENT_VERSION = "v1.6.0" # 現在のバージョン
 
 # --- ツールチップクラス ---
 class ToolTip:
@@ -212,8 +203,13 @@ class App(tk.Tk):
         self.title(f"File Comparator {CURRENT_VERSION}")
         self.geometry("850x700")
 
+        self.settings_win = None
+
+        # 設定ファイルのロードと監視変数のセットアップ
+        self._setup_variables()
+
         # システムのテーマ設定を検出
-        self.is_dark_mode = self._detect_system_theme()
+        self.is_dark_mode = self._resolve_dark_mode()
         
         # カラーパレット定義
         self.colors = {
@@ -233,13 +229,13 @@ class App(tk.Tk):
             }
         }
 
-        self._setup_variables()
         self._setup_styles()
         self._create_widgets()
         self._apply_theme_colors()
 
         self.log(f"ようこそ！ {CURRENT_VERSION}")
-        self.log(f"現在のシステムテーマ({'ダーク' if self.is_dark_mode else 'ライト'})を適用しました。")
+        self.log(f"適用テーマ: {'ダーク' if self.is_dark_mode else 'ライト'}（設定: {self._get_theme_label(self.theme_var.get())}）")
+        self.log(f"コピーモード: {self._get_copy_mode_label(self.copy_mode_var.get())}")
         self.log("Google Drive対応：ファイルをダウンロードせずにメタデータのみで比較します。")
 
     def _detect_system_theme(self):
@@ -254,15 +250,81 @@ class App(tk.Tk):
                 pass
         return True # デフォルト
 
+    def _resolve_dark_mode(self):
+        """現在の設定からダークモードを適用すべきかを判定する"""
+        theme = self.theme_var.get()
+        if theme == "light":
+            return False
+        elif theme == "dark":
+            return True
+        else: # "system"
+            return self._detect_system_theme()
+
+    def _get_theme_label(self, val):
+        if val == "light": return "ライト"
+        if val == "dark": return "ダーク"
+        return "システム連動"
+
+    def _get_copy_mode_label(self, val):
+        if val == "direct": return "比較先フォルダに直接コピー"
+        return "一時フォルダに抽出"
+
+    def load_config(self):
+        """設定ファイルから設定を読み込む"""
+        default_config = {"theme": "system", "copy_mode": "direct"}
+        if not os.path.exists(CONFIG_FILENAME):
+            self.save_config(default_config)
+            return default_config
+        try:
+            with open(CONFIG_FILENAME, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                # キーの不足を補完
+                for k, v in default_config.items():
+                    if k not in config:
+                        config[k] = v
+                return config
+        except Exception:
+            return default_config
+
+    def save_config(self, config_data=None):
+        """現在の設定を設定ファイルに保存する"""
+        if config_data is None:
+            config_data = {
+                "theme": self.theme_var.get(),
+                "copy_mode": self.copy_mode_var.get()
+            }
+        try:
+            with open(CONFIG_FILENAME, "w", encoding="utf-8") as f:
+                json.dump(config_data, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"Error saving config: {e}")
+
     def _setup_variables(self):
         self.stop_event = threading.Event()
         self.source_dir_var = tk.StringVar()
         self.target_dir_var = tk.StringVar()
         self.mode_var = tk.StringVar(value="simple")
         
+        # 設定関連
+        config = self.load_config()
+        self.theme_var = tk.StringVar(value=config.get("theme", "system"))
+        self.copy_mode_var = tk.StringVar(value=config.get("copy_mode", "direct"))
+
+        # 設定変更時の監視登録
+        self.theme_var.trace_add("write", self._on_theme_changed)
+        self.copy_mode_var.trace_add("write", self._on_copy_mode_changed)
+
         # 結果保持用
         self.last_missing_items = []
         self.last_source_dir = ""
+
+    def _on_theme_changed(self, *args):
+        self.is_dark_mode = self._resolve_dark_mode()
+        self._apply_theme_colors()
+        self.save_config()
+
+    def _on_copy_mode_changed(self, *args):
+        self.save_config()
 
     def _get_current_colors(self):
         return self.colors["dark"] if self.is_dark_mode else self.colors["light"]
@@ -286,15 +348,42 @@ class App(tk.Tk):
         self.style.configure("Header.TLabel", background=c["bg"], foreground=c["text"], font=("Yu Gothic UI", 16, "bold"))
         self.style.configure("Normal.TLabel", background=c["bg"], foreground=c["text"], font=("Yu Gothic UI", 10))
         
-        if hasattr(self, 'entry_source'):
+        if hasattr(self, 'entry_source') and self.entry_source.winfo_exists():
             self.entry_source.config(bg=c["entry_bg"], fg=c["entry_fg"], insertbackground=c["text"])
+        if hasattr(self, 'entry_target') and self.entry_target.winfo_exists():
             self.entry_target.config(bg=c["entry_bg"], fg=c["entry_fg"], insertbackground=c["text"])
-        if hasattr(self, 'log_area'):
+        if hasattr(self, 'log_area') and self.log_area.winfo_exists():
             self.log_area.config(bg=c["log_bg"], fg=c["log_fg"], insertbackground=c["text"])
         
-        if hasattr(self, 'rb_simple'):
+        if hasattr(self, 'rb_simple') and self.rb_simple.winfo_exists():
             self.rb_simple.set_colors(c)
+        if hasattr(self, 'rb_detailed') and self.rb_detailed.winfo_exists():
             self.rb_detailed.set_colors(c)
+
+        # 設定画面が開いている場合は、設定画面の配色も動的に更新する
+        if self.settings_win and self.settings_win.winfo_exists():
+            self._apply_settings_theme_colors(c)
+
+    def _apply_settings_theme_colors(self, c):
+        if not self.settings_win or not self.settings_win.winfo_exists():
+            return
+        self.settings_win.configure(bg=c["bg"])
+        if hasattr(self, 'settings_frame') and self.settings_frame.winfo_exists():
+            self.settings_frame.configure(bg=c["bg"])
+        if hasattr(self, 'settings_labels'):
+            for label in self.settings_labels:
+                if label.winfo_exists():
+                    label.configure(bg=c["bg"], fg=c["text"])
+        if hasattr(self, 'settings_lf_theme') and self.settings_lf_theme.winfo_exists():
+            self.settings_lf_theme.configure(bg=c["bg"], fg=c["text"])
+        if hasattr(self, 'settings_lf_copy') and self.settings_lf_copy.winfo_exists():
+            self.settings_lf_copy.configure(bg=c["bg"], fg=c["text"])
+        if hasattr(self, 'settings_lf_disclaimer') and self.settings_lf_disclaimer.winfo_exists():
+            self.settings_lf_disclaimer.configure(bg=c["bg"], fg=c["text"])
+        if hasattr(self, 'settings_rbs'):
+            for rb in self.settings_rbs:
+                if rb.winfo_exists():
+                    rb.set_colors(c)
 
     def _create_widgets(self):
         main_frame = ttk.Frame(self, padding="15", style="Main.TFrame")
@@ -428,7 +517,7 @@ class App(tk.Tk):
             self.log("比較先フォルダをスキャン中...")
             target_files = self._get_files_info(target_dir, mode)
             if self.stop_event.is_set(): return
-            self.log(f"-> {len(target_files)} 個のファイル")
+            self.log(f"-> {len(target_files)} 個 of ファイル")
 
             self.log("差分を計算中...")
             source_keys = set(source_files.keys())
@@ -471,8 +560,7 @@ class App(tk.Tk):
                     if self.stop_event.is_set(): return
                     self.log(f"[不足] {item}")
                 
-                # 不足がある場合のみ案内
-                self.log("\n※「不足分をコピー」ボタンで抽出可能です。")
+                self.log("\n※「不足分をコピー」ボタンでコピー可能です。")
 
             if mismatch_items:
                 self.log("\n【不一致のファイル】")
@@ -489,29 +577,43 @@ class App(tk.Tk):
         if not self.last_missing_items or not self.last_source_dir:
             return
         
-        # 実行ファイルの場所を取得
-        if getattr(sys, 'frozen', False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            
-        timestamp = time.strftime('%Y-%m-%d_%H-%M-%S')
-        dest_root = os.path.join(base_dir, f"Extracted_Missing_Files_{timestamp}")
+        copy_mode = self.copy_mode_var.get()
+        target_dir = self.target_dir_var.get().strip()
 
-        if not messagebox.askyesno("確認", f"不足ファイルを以下のフォルダにコピーしますか？\n\n{dest_root}"):
+        if copy_mode == "direct":
+            if not target_dir or not os.path.exists(target_dir):
+                messagebox.showerror("エラー", "比較先フォルダが無効です。")
+                return
+            dest_root = target_dir
+            confirm_msg = f"不足しているファイル（{len(self.last_missing_items)}件）を比較先フォルダに直接同期コピーしますか？\n\nコピー先: {dest_root}"
+        else:
+            # 実行ファイルの場所を取得
+            if getattr(sys, 'frozen', False):
+                base_dir = os.path.dirname(sys.executable)
+            else:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                
+            timestamp = time.strftime('%Y-%m-%d_%H-%M-%S')
+            dest_root = os.path.join(base_dir, f"Extracted_Missing_Files_{timestamp}")
+            confirm_msg = f"不足ファイルを以下のフォルダに抽出コピーしますか？\n\n抽出先: {dest_root}"
+
+        if not messagebox.askyesno("確認", confirm_msg):
             return
 
         self.set_buttons_state(is_running=True)
         self.stop_event.clear()
         
-        thread = threading.Thread(target=self._process_copy, args=(dest_root,), daemon=True)
+        thread = threading.Thread(target=self._process_copy, args=(dest_root, copy_mode), daemon=True)
         thread.start()
         self.monitor_thread(thread)
 
-    def _process_copy(self, dest_root):
+    def _process_copy(self, dest_root, copy_mode):
         try:
             self.log(f"\n■ コピー処理を開始します...")
-            self.log(f"出力先: {dest_root}")
+            if copy_mode == "direct":
+                self.log(f"コピー先(直接同期): {dest_root}")
+            else:
+                self.log(f"抽出先: {dest_root}")
             
             os.makedirs(dest_root, exist_ok=True)
             
@@ -532,20 +634,23 @@ class App(tk.Tk):
                     # コピー (メタデータも保持)
                     shutil.copy2(src_path, dst_path)
                     count += 1
-                    if count % 10 == 0: # ログが多すぎないように間引く
+                    if count % 10 == 0 or total <= 10: # 間引きログ、または少数の場合は毎行
                         self.log(f"コピー中 ({count}/{total}): {rel_path}")
                 except Exception as e:
                     self.log(f"エラー: コピー失敗 {rel_path}: {e}")
 
             self.log("-" * 40)
             self.log(f"コピー完了: {count}/{total} ファイル")
-            self.log(f"保存先: {dest_root}")
             
-            # 完了後フォルダを開く
-            try:
-                os.startfile(dest_root)
-            except:
-                pass
+            if copy_mode == "direct":
+                self.log(f"同期先: {dest_root}")
+            else:
+                self.log(f"保存先: {dest_root}")
+                # 抽出完了後フォルダを開く
+                try:
+                    os.startfile(dest_root)
+                except:
+                    pass
 
         except Exception:
             self.log("コピー中にエラーが発生しました。")
@@ -562,7 +667,7 @@ class App(tk.Tk):
             self.after(100, lambda: self.monitor_thread(thread))
         else:
             self.set_buttons_state(is_running=False)
-            if self.stop_event.is_set(): pass # ログは各処理内で出す
+            if self.stop_event.is_set(): pass
             else: self.log("\n処理が完了しました。")
 
     def _get_files_info(self, root_dir, mode):
@@ -591,30 +696,68 @@ class App(tk.Tk):
     # --- 設定画面・アップデートなど ---
     def open_settings(self):
         """設定画面を開く"""
-        settings_win = tk.Toplevel(self)
-        settings_win.title("設定")
-        settings_win.geometry("450x400") # サイズ拡張
-        settings_win.grab_set() # モーダルにする
+        if self.settings_win and self.settings_win.winfo_exists():
+            self.settings_win.lift()
+            return
+            
+        self.settings_win = tk.Toplevel(self)
+        self.settings_win.title("設定")
+        self.settings_win.geometry("500x520")
+        self.settings_win.grab_set() # モーダルにする
         
-        # テーマ適用 (簡易的)
-        bg_color = self.colors["dark"]["bg"] if self.is_dark_mode else self.colors["light"]["bg"]
-        fg_color = self.colors["dark"]["text"] if self.is_dark_mode else self.colors["light"]["text"]
-        settings_win.configure(bg=bg_color)
+        c = self._get_current_colors()
+        self.settings_win.configure(bg=c["bg"])
 
-        frame = tk.Frame(settings_win, bg=bg_color, padx=20, pady=20)
-        frame.pack(fill=tk.BOTH, expand=True)
+        self.settings_frame = tk.Frame(self.settings_win, bg=c["bg"], padx=20, pady=20)
+        self.settings_frame.pack(fill=tk.BOTH, expand=True)
 
-        # バージョン表示
-        tk.Label(frame, text="File Comparator", font=("Yu Gothic UI", 14, "bold"), bg=bg_color, fg=fg_color).pack(pady=(0, 5))
-        tk.Label(frame, text=f"Version: {CURRENT_VERSION}", font=("Yu Gothic UI", 10), bg=bg_color, fg=fg_color).pack(pady=(0, 20))
+        self.settings_labels = []
+        self.settings_rbs = []
+
+        # タイトルとバージョン表示
+        lbl_title = tk.Label(self.settings_frame, text="File Comparator", font=("Yu Gothic UI", 14, "bold"), bg=c["bg"], fg=c["text"])
+        lbl_title.pack(pady=(0, 5))
+        self.settings_labels.append(lbl_title)
+        
+        lbl_ver = tk.Label(self.settings_frame, text=f"Version: {CURRENT_VERSION}", font=("Yu Gothic UI", 10), bg=c["bg"], fg=c["text"])
+        lbl_ver.pack(pady=(0, 10))
+        self.settings_labels.append(lbl_ver)
+
+        # テーマ設定 Frame
+        self.settings_lf_theme = tk.LabelFrame(self.settings_frame, text="テーマ設定", bg=c["bg"], fg=c["text"], padx=10, pady=5, font=("Yu Gothic UI", 10, "bold"))
+        self.settings_lf_theme.pack(fill=tk.X, pady=5)
+        
+        rb_theme_sys = CustomRadioButton(self.settings_lf_theme, text="システム連動", variable=self.theme_var, value="system", height=30)
+        rb_theme_sys.pack(side=tk.LEFT, padx=5)
+        self.settings_rbs.append(rb_theme_sys)
+        
+        rb_theme_light = CustomRadioButton(self.settings_lf_theme, text="ライト", variable=self.theme_var, value="light", height=30)
+        rb_theme_light.pack(side=tk.LEFT, padx=5)
+        self.settings_rbs.append(rb_theme_light)
+        
+        rb_theme_dark = CustomRadioButton(self.settings_lf_theme, text="ダーク", variable=self.theme_var, value="dark", height=30)
+        rb_theme_dark.pack(side=tk.LEFT, padx=5)
+        self.settings_rbs.append(rb_theme_dark)
+
+        # コピー設定 Frame
+        self.settings_lf_copy = tk.LabelFrame(self.settings_frame, text="不足ファイルのコピー先設定", bg=c["bg"], fg=c["text"], padx=10, pady=5, font=("Yu Gothic UI", 10, "bold"))
+        self.settings_lf_copy.pack(fill=tk.X, pady=5)
+        
+        rb_copy_direct = CustomRadioButton(self.settings_lf_copy, text="比較先フォルダに直接コピー (推奨)", variable=self.copy_mode_var, value="direct", height=30)
+        rb_copy_direct.pack(anchor="w", padx=5, pady=2)
+        self.settings_rbs.append(rb_copy_direct)
+        
+        rb_copy_extract = CustomRadioButton(self.settings_lf_copy, text="一時フォルダに抽出", variable=self.copy_mode_var, value="extract", height=30)
+        rb_copy_extract.pack(anchor="w", padx=5, pady=2)
+        self.settings_rbs.append(rb_copy_extract)
 
         # アップデートボタン
-        btn_update = ttk.Button(frame, text="アップデートを確認", command=lambda: self.check_update(settings_win), width=20)
+        btn_update = ttk.Button(self.settings_frame, text="アップデートを確認", command=lambda: self.check_update(self.settings_win), width=20)
         btn_update.pack(pady=10)
 
         # 免責事項
-        disclaimer_frame = tk.LabelFrame(frame, text="免責事項", bg=bg_color, fg=fg_color, padx=10, pady=10)
-        disclaimer_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        self.settings_lf_disclaimer = tk.LabelFrame(self.settings_frame, text="免責事項", bg=c["bg"], fg=c["text"], padx=10, pady=10, font=("Yu Gothic UI", 10, "bold"))
+        self.settings_lf_disclaimer.pack(fill=tk.BOTH, expand=True, pady=5)
         
         disclaimer_text = (
             "本ソフトウェアの使用により生じたいかなる損害\n"
@@ -623,17 +766,26 @@ class App(tk.Tk):
             "必ずバックアップを取った上で、\n"
             "ユーザー自身の責任において使用してください。"
         )
-        tk.Label(disclaimer_frame, text=disclaimer_text, justify=tk.LEFT, bg=bg_color, fg=fg_color, font=("Yu Gothic UI", 9)).pack(anchor="w")
+        lbl_disc = tk.Label(self.settings_lf_disclaimer, text=disclaimer_text, justify=tk.LEFT, bg=c["bg"], fg=c["text"], font=("Yu Gothic UI", 9))
+        lbl_disc.pack(anchor="w")
+        self.settings_labels.append(lbl_disc)
 
-        # 閉じるボタン削除 (設定画面は右上の×で閉じる)
-        # ttk.Button(frame, text="閉じる", command=settings_win.destroy).pack(pady=(10, 0))
+        # 閉じる処理
+        self.settings_win.protocol("WM_DELETE_WINDOW", self._on_settings_close)
+
+        # ラジオボタンの色を初期設定
+        for rb in self.settings_rbs:
+            rb.set_colors(c)
+
+    def _on_settings_close(self):
+        self.settings_win.destroy()
+        self.settings_win = None
 
     def check_update(self, parent_win):
         """GitHubから最新リリースを確認する"""
         try:
             url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
             req = urllib.request.Request(url)
-            # GitHub APIはUser-Agentが必要な場合がある
             req.add_header('User-Agent', 'Python/FileComparator')
             
             with urllib.request.urlopen(req) as res:
@@ -648,14 +800,12 @@ class App(tk.Tk):
             # バージョン比較 (セマンティックバージョニング)
             try:
                 def parse_version(v_str):
-                    # "v1.5.0" -> [1, 5, 0]
                     return [int(x) for x in v_str.lstrip('v').split('.')]
 
                 current_ver_nums = parse_version(CURRENT_VERSION)
                 latest_ver_nums = parse_version(latest_tag)
 
                 if latest_ver_nums > current_ver_nums:
-                     # 新しいバージョンがある
                     msg = f"新しいバージョンが見つかりました: {latest_tag}\n\nダウンロードページを開きますか？"
                     if messagebox.askyesno("アップデート", msg, parent=parent_win):
                         webbrowser.open(html_url)
@@ -663,14 +813,12 @@ class App(tk.Tk):
                     messagebox.showinfo("確認", "お使いのバージョンは最新です。", parent=parent_win)
             
             except Exception:
-                # バージョン形式が想定外などの場合、単純比較にフォールバックするか、ログ出す
                 if latest_tag != CURRENT_VERSION:
                      msg = f"新しいバージョンが見つかりました（判定不能）: {latest_tag}\n\nダウンロードページを開きますか？"
                      if messagebox.askyesno("アップデート", msg, parent=parent_win):
                         webbrowser.open(html_url)
                 else:
                     messagebox.showinfo("確認", "お使いのバージョンは最新です。", parent=parent_win)
-
 
         except urllib.error.HTTPError as e:
             if e.code == 404:
